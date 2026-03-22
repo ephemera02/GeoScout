@@ -440,6 +440,9 @@ def index(): return render_template('index.html')
 @app.route('/static/<path:path>')
 def serve_static(path): return send_from_directory(STATIC_DIR, path)
 
+@app.route('/favicon.ico')
+def favicon(): return send_from_directory(BASE_DIR, 'Geoscout_icon.ico', mimetype='image/x-icon')
+
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'image' not in request.files: return jsonify({'error':'No image'}),400

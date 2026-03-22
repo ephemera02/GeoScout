@@ -14,14 +14,16 @@ if errorlevel 1 (
 
 :: Install dependencies
 echo   Installing dependencies...
-pip install flask pillow numpy pyinstaller --quiet
+python -m pip install flask pillow numpy pyinstaller --quiet
 echo.
 
 :: Build
 echo   Building GeoScout.exe...
-pyinstaller --onedir --noconsole --name GeoScout --icon=Geoscout_icon.ico app.py 2>nul
-if not exist "dist\GeoScout" (
-    pyinstaller --onedir --noconsole --name GeoScout app.py
+python -m PyInstaller --onedir --noconsole --noconfirm --name GeoScout --icon=Geoscout_icon.ico app.py
+if errorlevel 1 (
+    echo   [ERROR] Build failed. Check the output above.
+    pause
+    exit /b 1
 )
 
 :: Copy templates and static into the dist folder
