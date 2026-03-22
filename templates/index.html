@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>GeoScout v2.0</title>
+<link rel="stylesheet" href="/static/leaflet.css"/>
+<link rel="stylesheet" href="/static/leaflet.draw.css"/>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0a0e17;--panel:#111827;--border:#1e293b;--text:#e2e8f0;--dim:#64748b;
+--green:#06d6a0;--blue:#00b4d8;--red:#ef4444;--amber:#f59e0b;--purple:#a78bfa}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display:flex}
+::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+.sidebar{width:370px;min-width:370px;height:100vh;overflow-y:auto;background:var(--panel);border-right:1px solid var(--border)}
+.logo{padding:14px 18px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)}
+.logo h1{font-size:18px;font-weight:700;letter-spacing:-.5px}
+.logo .v{font-size:10px;background:var(--green);color:#000;padding:2px 7px;border-radius:8px;font-weight:700}
+.stats{padding:8px 18px;background:rgba(0,0,0,.3);border-bottom:1px solid var(--border);font-size:11px;color:var(--dim);display:flex;gap:14px}
+.stats b{color:var(--green);font-variant-numeric:tabular-nums}
+
+.sec{padding:14px 18px;border-bottom:1px solid var(--border)}
+.sec-t{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);margin-bottom:10px}
+
+/* Provider tabs */
+.tabs{display:flex;gap:0;background:var(--bg);border-radius:6px;overflow:hidden;border:1px solid var(--border)}
+.tab{flex:1;padding:8px 4px;text-align:center;font-size:11px;font-weight:600;cursor:pointer;border:none;background:transparent;color:var(--dim);transition:all .15s;line-height:1.3}
+.tab.on{color:#fff}
+.tab[data-m=mapillary].on{background:rgba(6,214,160,.15);color:var(--green);border-bottom:2px solid var(--green)}
+.tab[data-m=google].on{background:rgba(0,180,216,.15);color:var(--blue);border-bottom:2px solid var(--blue)}
+.tab[data-m=baidu].on{background:rgba(167,139,250,.15);color:var(--purple);border-bottom:2px solid var(--purple)}
+.tab[data-m=satellite].on{background:rgba(245,158,11,.15);color:var(--amber);border-bottom:2px solid var(--amber)}
+.tab:hover:not(.on){background:rgba(255,255,255,.02)}
+.tab small{display:block;font-size:9px;font-weight:400;color:var(--dim);margin-top:1px}
+
+/* Upload */
+.upz{border:2px dashed var(--border);border-radius:6px;padding:20px;text-align:center;cursor:pointer;transition:all .2s}
+.upz:hover{border-color:var(--green);background:rgba(6,214,160,.02)}
+.upz.has{padding:6px;border-style:solid}
+.upz img{max-width:100%;max-height:160px;border-radius:4px}
+.upi{font-size:10px;color:var(--dim);margin-top:4px}
+
+/* Inputs */
+.inp{width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:12px}
+.inp:focus{outline:none;border-color:var(--green)}
+select.inp{cursor:pointer}
+.hint{font-size:10px;color:var(--dim);margin-top:4px;line-height:1.3}
+.hint a{color:var(--blue);text-decoration:none}
+
+/* Param grid */
+.pg{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.pi{display:flex;flex-direction:column;gap:3px}
+.pl{font-size:10px;color:var(--dim);font-weight:500}
+
+/* Threshold */
+.thr{display:flex;align-items:center;gap:10px}
+.thr input[type=range]{flex:1;-webkit-appearance:none;height:3px;background:var(--border);border-radius:2px;outline:none}
+.thr input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--green);cursor:pointer}
+.tv{font-size:14px;font-weight:700;color:var(--green);min-width:36px;text-align:right;font-variant-numeric:tabular-nums}
+
+/* Methods */
+.mg{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.mi{display:flex;align-items:center;gap:6px;padding:6px;background:var(--bg);border-radius:5px;border:1px solid var(--border);font-size:12px}
+.mi input[type=checkbox]{accent-color:var(--green);width:14px;height:14px}
+.mi label{flex:1;font-weight:500;font-size:11px}
+.mi input[type=number]{width:42px;padding:3px 5px;text-align:center;font-size:11px;background:var(--panel);border:1px solid var(--border);border-radius:3px;color:var(--text)}
+
+/* Buttons */
+.btn{width:100%;padding:10px;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:6px}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn-go{background:var(--green);color:#000}.btn-go:hover:not(:disabled){filter:brightness(1.1)}
+.btn-stop{background:var(--red);color:#fff}
+.btn-out{background:transparent;border:1px solid var(--border);color:var(--text)}.btn-out:hover{background:rgba(255,255,255,.03)}
+
+/* Progress */
+.prog{background:var(--bg);border-radius:6px;padding:10px;display:none}
+.prog.on{display:block}
+.prog-h{display:flex;justify-content:space-between;font-size:11px;margin-bottom:6px}
+.prog-ph{font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--green)}
+.prog-bar{height:3px;background:var(--border);border-radius:2px;overflow:hidden}
+.prog-fill{height:100%;background:var(--green);border-radius:2px;transition:width .3s}
+.prog-st{display:flex;gap:12px;margin-top:6px;font-size:10px;color:var(--dim)}
+.prog-st b{color:var(--text);font-weight:500}
+
+/* Estimate */
+.est{background:var(--bg);border-radius:6px;padding:10px;font-size:11px;display:none}
+.est.on{display:block}
+.er{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.er:last-child{border:none}
+.el{color:var(--dim)}.ev{font-weight:600;font-variant-numeric:tabular-nums}
+
+/* Provider panels */
+.prov{display:none}.prov.on{display:block}
+
+/* Heading buttons */
+.hg{display:flex;flex-wrap:wrap;gap:3px}
+.hb{padding:5px 8px;font-size:10px;background:var(--bg);border:1px solid var(--border);border-radius:3px;cursor:pointer;color:var(--dim);transition:all .1s}
+.hb.on{background:rgba(0,180,216,.12);border-color:var(--blue);color:var(--blue)}
+
+/* Map */
+.map-wrap{flex:1;position:relative}
+#map{width:100%;height:100%}
+
+/* Result popup */
+.rp{font-size:11px;line-height:1.4}
+.rp .sc{font-size:16px;font-weight:700;margin-bottom:3px}
+.rp .sc.hi{color:var(--green)}.rp .sc.md{color:var(--amber)}
+.rp .mt{display:grid;grid-template-columns:1fr 1fr;gap:1px 10px;margin:4px 0}
+.rp .mt span{color:var(--dim)}
+.rp a{color:var(--blue);text-decoration:none;font-weight:500;display:block;margin-top:4px}
+</style>
+</head>
+<body>
+<div class="sidebar">
+<div class="logo">
+  <svg viewBox="0 0 28 28" fill="none" width="28" height="28"><circle cx="14" cy="14" r="13" stroke="var(--green)" stroke-width="1.5"/><circle cx="14" cy="14" r="5" stroke="var(--green)" stroke-width="1.5"/><line x1="14" y1="1" x2="14" y2="7" stroke="var(--green)" stroke-width="1.5"/><line x1="14" y1="21" x2="14" y2="27" stroke="var(--green)" stroke-width="1.5"/><line x1="1" y1="14" x2="7" y2="14" stroke="var(--green)" stroke-width="1.5"/><line x1="21" y1="14" x2="27" y2="14" stroke="var(--green)" stroke-width="1.5"/></svg>
+  <h1>GeoScout <span class="v">v2.0</span></h1>
+</div>
+<div class="stats">Fetched: <b id="s-f">0</b> &nbsp;|&nbsp; Compared: <b id="s-c">0</b> &nbsp;|&nbsp; Matches: <b id="s-m">0</b></div>
+
+<div class="sec">
+  <div class="tabs">
+    <button class="tab on" data-m="mapillary" onclick="setMode('mapillary')">Mapillary<small>Free, global</small></button>
+    <button class="tab" data-m="google" onclick="setMode('google')">Google SV<small>Paid, no China</small></button>
+    <button class="tab" data-m="baidu" onclick="setMode('baidu')">Baidu<small>Free, China</small></button>
+    <button class="tab" data-m="satellite" onclick="setMode('satellite')">Satellite<small>Overhead</small></button>
+  </div>
+</div>
+
+<div class="sec">
+  <div class="sec-t">Reference Image</div>
+  <div class="upz" id="upz" onclick="document.getElementById('fi').click()">
+    <div id="up-p"><div style="font-size:20px;margin-bottom:6px">&#128247;</div><div style="font-size:12px">Click to upload</div><div style="font-size:10px;color:var(--dim);margin-top:2px">JPG, PNG, WebP</div></div>
+    <img id="up-img" style="display:none">
+  </div>
+  <div class="upi" id="up-info"></div>
+  <input type="file" id="fi" accept="image/*" style="display:none" onchange="doUpload(this)">
+</div>
+
+<!-- MAPILLARY panel -->
+<div class="prov on" id="p-mapillary">
+  <div class="sec">
+    <div class="sec-t">Mapillary Token</div>
+    <input type="password" class="inp" id="mly-key" placeholder="MLY|...">
+    <div class="hint"><a href="https://www.mapillary.com/dashboard/developers" target="_blank">Get a free token</a> &bull; No cost, unlimited</div>
+  </div>
+</div>
+
+<!-- GOOGLE panel -->
+<div class="prov" id="p-google">
+  <div class="sec">
+    <div class="sec-t">Google API Key</div>
+    <input type="password" class="inp" id="goo-key" placeholder="AIza...">
+    <div class="hint"><a href="https://console.cloud.google.com/apis/credentials" target="_blank">Get a key</a> &bull; Enable Street View Static API &bull; $200/mo free (~28K images)</div>
+  </div>
+  <div class="sec">
+    <div class="sec-t">Spacing</div>
+    <div class="pg">
+      <div class="pi"><div class="pl">Coarse (m)</div><input type="number" class="inp" id="g-cs" value="200" min="50" max="1000" step="50"></div>
+      <div class="pi"><div class="pl">Fine (m)</div><input type="number" class="inp" id="g-fs" value="30" min="10" max="100" step="10"></div>
+      <div class="pi"><div class="pl">Fine radius (m)</div><input type="number" class="inp" id="g-fr" value="100" min="50" max="500" step="50"></div>
+      <div class="pi"><div class="pl">Rate limit (ms)</div><input type="number" class="inp" id="g-rl" value="50" min="0" max="500" step="10"></div>
+    </div>
+  </div>
+  <div class="sec">
+    <div class="sec-t">Coarse headings</div>
+    <div class="hg" id="g-ch"><button class="hb on" data-h="0">N</button><button class="hb on" data-h="90">E</button><button class="hb on" data-h="180">S</button><button class="hb on" data-h="270">W</button></div>
+    <div class="sec-t" style="margin-top:8px">Fine headings</div>
+    <div class="hg" id="g-fh"><button class="hb on" data-h="0">N</button><button class="hb on" data-h="45">NE</button><button class="hb on" data-h="90">E</button><button class="hb on" data-h="135">SE</button><button class="hb on" data-h="180">S</button><button class="hb on" data-h="225">SW</button><button class="hb on" data-h="270">W</button><button class="hb on" data-h="315">NW</button></div>
+  </div>
+</div>
+
+<!-- BAIDU panel -->
+<div class="prov" id="p-baidu">
+  <div class="sec">
+    <div class="sec-t">Baidu API Key (ak)</div>
+    <input type="password" class="inp" id="bd-key" placeholder="Baidu ak...">
+    <div class="hint"><a href="https://lbs.baidu.com/apiconsole/key" target="_blank">Get a key</a> &bull; Requires Baidu developer account &bull; Free tier available<br>Handles WGS84 → BD09 coordinate conversion automatically</div>
+  </div>
+  <div class="sec">
+    <div class="sec-t">Spacing</div>
+    <div class="pg">
+      <div class="pi"><div class="pl">Coarse (m)</div><input type="number" class="inp" id="b-cs" value="200" min="50" max="1000" step="50"></div>
+      <div class="pi"><div class="pl">Fine (m)</div><input type="number" class="inp" id="b-fs" value="30" min="10" max="100" step="10"></div>
+      <div class="pi"><div class="pl">Fine radius (m)</div><input type="number" class="inp" id="b-fr" value="100" min="50" max="500" step="50"></div>
+      <div class="pi"><div class="pl">Rate limit (ms)</div><input type="number" class="inp" id="b-rl" value="100" min="0" max="500" step="10"></div>
+    </div>
+  </div>
+</div>
+
+<!-- SATELLITE panel -->
+<div class="prov" id="p-satellite">
+  <div class="sec">
+    <div class="sec-t">Imagery Source</div>
+    <select class="inp" id="sat-src">
+      <option value="esri">ESRI World Imagery (Free, ~1m)</option>
+      <option value="sentinel">Sentinel-2 (Free, 10m)</option>
+      <option value="google">Google Satellite (Paid, ~0.5m)</option>
+    </select>
+  </div>
+  <div class="sec">
+    <div class="sec-t">Zoom Levels</div>
+    <div class="pg">
+      <div class="pi"><div class="pl">Coarse (Pass 1)</div>
+        <select class="inp" id="sat-cz"><option value="12">12 - Region</option><option value="13" selected>13 - City</option><option value="14">14 - Town</option><option value="15">15 - District</option></select>
+      </div>
+      <div class="pi"><div class="pl">Fine (Pass 2)</div>
+        <select class="inp" id="sat-fz"><option value="16">16 - Blocks</option><option value="17">17 - Streets</option><option value="18" selected>18 - Buildings</option><option value="19">19 - Detail</option></select>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Shared: threshold + methods -->
+<div class="sec">
+  <div class="sec-t">Threshold</div>
+  <div class="thr"><input type="range" id="thresh" min="30" max="95" value="55" oninput="document.getElementById('tv').textContent=this.value+'%'"><div class="tv" id="tv">55%</div></div>
+</div>
+<div class="sec">
+  <div class="sec-t">Comparison Methods</div>
+  <div class="mg">
+    <div class="mi"><input type="checkbox" id="m-ph" checked><label for="m-ph">pHash</label><input type="number" id="w-ph" value="30" min="0" max="100" step="5"></div>
+    <div class="mi"><input type="checkbox" id="m-ss" checked><label for="m-ss">SSIM</label><input type="number" id="w-ss" value="30" min="0" max="100" step="5"></div>
+    <div class="mi"><input type="checkbox" id="m-hi" checked><label for="m-hi">Color</label><input type="number" id="w-hi" value="20" min="0" max="100" step="5"></div>
+    <div class="mi"><input type="checkbox" id="m-tm" checked><label for="m-tm">Tmpl</label><input type="number" id="w-tm" value="20" min="0" max="100" step="5"></div>
+  </div>
+</div>
+
+<!-- Actions -->
+<div class="sec">
+  <div class="est" id="est-box"></div>
+  <div class="prog" id="prog">
+    <div class="prog-h"><div class="prog-ph" id="pp">STARTING</div><div id="ppct" style="font-weight:600">0%</div></div>
+    <div class="prog-bar"><div class="prog-fill" id="pf" style="width:0"></div></div>
+    <div class="prog-st">Pts: <b id="ps">0</b>/<b id="pt">0</b> &nbsp; Imgs: <b id="pimg">0</b> <span id="pnc"></span></div>
+  </div>
+  <div style="margin-top:8px;display:flex;gap:6px">
+    <button class="btn btn-go" id="btn-go" onclick="startScan()" disabled>Draw search area on map</button>
+    <button class="btn btn-stop" id="btn-stop" onclick="cancelScan()" style="display:none;width:auto;padding:10px 14px">&#9632;</button>
+  </div>
+  <button class="btn btn-out" id="btn-csv" onclick="exportCSV()" style="margin-top:6px;display:none">Export CSV</button>
+</div>
+</div>
+
+<div class="map-wrap"><div id="map"></div></div>
+
+<script src="/static/leaflet.js"></script>
+<script src="/static/leaflet.draw.js"></script>
+<script>
+let mode='mapillary', uploaded=null, scanId=null, poll=null, rect=null, markers=[], lastRC=0;
+
+// Map
+const map=L.map('map',{zoomControl:false}).setView([30,105],5);
+L.control.zoom({position:'topleft'}).addTo(map);
+const osm=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'OSM',maxZoom:19});
+const esri=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{attribution:'ESRI',maxZoom:19});
+esri.addTo(map);
+L.control.layers({'Street':osm,'Satellite':esri},{},{position:'topright'}).addTo(map);
+
+const drawn=new L.FeatureGroup(); map.addLayer(drawn);
+const dc=new L.Control.Draw({position:'topright',draw:{rectangle:{shapeOptions:{color:'#06d6a0',weight:2,fillOpacity:.08}},polygon:false,polyline:false,circle:false,marker:false,circlemarker:false},edit:{featureGroup:drawn,remove:true}});
+map.addControl(dc);
+map.on(L.Draw.Event.CREATED,e=>{drawn.clearLayers();rect=e.layer;drawn.addLayer(rect);updateEst();$('btn-go').disabled=false;$('btn-go').textContent='Start Scan'});
+map.on(L.Draw.Event.DELETED,()=>{rect=null;$('btn-go').disabled=true;$('btn-go').textContent='Draw search area on map';$('est-box').classList.remove('on')});
+
+// Heading toggles
+document.querySelectorAll('.hb').forEach(b=>b.onclick=()=>b.classList.toggle('on'));
+function getH(id){return[...document.querySelectorAll('#'+id+' .hb.on')].map(b=>+b.dataset.h)}
+
+// Helpers
+const $=id=>document.getElementById(id);
+function getBounds(){if(!rect)return null;const b=rect.getBounds();return{south:b.getSouth(),west:b.getWest(),north:b.getNorth(),east:b.getEast()}}
+
+// Mode
+function setMode(m){
+  mode=m;
+  document.querySelectorAll('.tab').forEach(t=>{t.classList.toggle('on',t.dataset.m===m)});
+  document.querySelectorAll('.prov').forEach(p=>{p.classList.toggle('on',p.id==='p-'+m)});
+  if(rect)updateEst();
+}
+
+// Upload
+function doUpload(inp){
+  const f=inp.files[0]; if(!f)return;
+  const fd=new FormData(); fd.append('image',f);
+  fetch('/upload',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
+    if(d.error){alert(d.error);return}
+    uploaded=d.filename;
+    const img=$('up-img'); img.src=URL.createObjectURL(f); img.style.display='block';
+    $('up-p').style.display='none'; $('upz').classList.add('has');
+    $('up-info').textContent=`${d.width}x${d.height} — ${d.filename}`;
+  });
+}
+
+// Estimate
+function updateEst(){
+  const b=getBounds(); if(!b)return;
+  const body={bounds:b,mode};
+  if(mode==='google'){body.coarse_spacing=+$('g-cs').value;body.fine_spacing=+$('g-fs').value;body.fine_radius=+$('g-fr').value;body.coarse_headings=getH('g-ch');body.fine_headings=getH('g-fh')}
+  if(mode==='baidu'){body.coarse_spacing=+$('b-cs').value;body.fine_spacing=+$('b-fs').value;body.fine_radius=+$('b-fr').value}
+  if(mode==='satellite'){body.coarse_zoom=+$('sat-cz').value;body.fine_zoom=+$('sat-fz').value}
+  fetch('/estimate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(e=>{
+    const box=$('est-box'); let h='';
+    if(mode==='mapillary'){
+      h=`<div class="er"><span class="el">Sub-box queries</span><span class="ev">${e.sub_boxes}</span></div>
+          <div class="er"><span class="el">Est. images to compare</span><span class="ev">~${e.est_images.toLocaleString()}</span></div>
+          <div class="er"><span class="el">Cost</span><span class="ev" style="color:var(--green)">Free</span></div>`;
+    } else if(mode==='google'){
+      h=`<div class="er"><span class="el">Sample points</span><span class="ev">${e.coarse_points.toLocaleString()}</span></div>
+          <div class="er"><span class="el">Coarse images</span><span class="ev">${e.coarse_images.toLocaleString()}</span></div>
+          <div class="er"><span class="el">Fine images (est.)</span><span class="ev">${e.fine_images.toLocaleString()}</span></div>
+          <div class="er"><span class="el">Total billable</span><span class="ev">${e.total_images.toLocaleString()}</span></div>
+          <div class="er"><span class="el">Cost</span><span class="ev" style="color:var(--amber)">$${e.cost}</span></div>
+          <div class="er"><span class="el">Free quota</span><span class="ev" style="color:${e.free_pct>=100?'var(--green)':'var(--amber)'}">${e.free_pct}%</span></div>`;
+    } else if(mode==='baidu'){
+      h=`<div class="er"><span class="el">Sample points</span><span class="ev">${e.coarse_points.toLocaleString()}</span></div>
+          <div class="er"><span class="el">Total images</span><span class="ev">${e.total_images.toLocaleString()}</span></div>
+          <div class="er"><span class="el">Cost</span><span class="ev" style="color:var(--green)">Free</span></div>`;
+    } else {
+      h=`<div class="er"><span class="el">Coarse tiles</span><span class="ev">${e.coarse_tiles.toLocaleString()}</span></div>
+          <div class="er"><span class="el">Fine tiles (est.)</span><span class="ev">${e.fine_tiles.toLocaleString()}</span></div>
+          <div class="er"><span class="el">Total</span><span class="ev">${e.total_tiles.toLocaleString()}</span></div>`;
+    }
+    box.innerHTML=h; box.classList.add('on');
+  });
+}
+
+// Scan
+function startScan(){
+  if(!uploaded){alert('Upload a reference image');return}
+  if(!rect){alert('Draw a search area');return}
+  const keyMap={mapillary:'mly-key',google:'goo-key',baidu:'bd-key'};
+  const keyEl=keyMap[mode]; 
+  if(keyEl && !$(keyEl).value.trim()){alert('Enter your API key/token');return}
+
+  const body={filename:uploaded,bounds:getBounds(),mode,threshold:+$('thresh').value,
+    w_phash:$('m-ph').checked?+$('w-ph').value:0, w_ssim:$('m-ss').checked?+$('w-ss').value:0,
+    w_histogram:$('m-hi').checked?+$('w-hi').value:0, w_template:$('m-tm').checked?+$('w-tm').value:0,
+    max_results:200};
+
+  if(keyEl) body.api_key=$(keyEl).value.trim();
+  if(mode==='google'){body.coarse_spacing=+$('g-cs').value;body.fine_spacing=+$('g-fs').value;body.fine_radius=+$('g-fr').value;body.rate_limit=+$('g-rl').value;body.coarse_headings=getH('g-ch');body.fine_headings=getH('g-fh')}
+  if(mode==='baidu'){body.coarse_spacing=+$('b-cs').value;body.fine_spacing=+$('b-fs').value;body.fine_radius=+$('b-fr').value;body.rate_limit=+$('b-rl').value}
+  if(mode==='satellite'){body.source=$('sat-src').value;body.coarse_zoom=+$('sat-cz').value;body.fine_zoom=+$('sat-fz').value}
+
+  markers.forEach(m=>map.removeLayer(m)); markers=[]; lastRC=0;
+  fetch('/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(d=>{
+    if(d.error){alert(d.error);return}
+    scanId=d.scan_id;
+    $('btn-go').style.display='none';$('btn-stop').style.display='block';$('btn-csv').style.display='none';
+    $('prog').classList.add('on');$('est-box').classList.remove('on');
+    poll=setInterval(pollStatus,800);
+  });
+}
+
+function pollStatus(){
+  if(!scanId)return;
+  fetch('/status/'+scanId).then(r=>r.json()).then(s=>{
+    $('pp').textContent=s.phase.toUpperCase();
+    let pct=0;
+    if(s.phase==='coarse'&&s.total_points) pct=s.scanned/s.total_points*100;
+    else if(s.phase==='fine'&&s.total_fine_points) pct=s.fine_scanned/s.total_fine_points*100;
+    else if(s.phase==='comparing'&&s.total_points) pct=s.scanned/s.total_points*100;
+    else if(s.phase==='searching') pct=10;
+    else if(s.completed) pct=100;
+    $('pf').style.width=pct+'%'; $('ppct').textContent=Math.round(pct)+'%';
+    $('ps').textContent=s.phase==='fine'?s.fine_scanned:s.scanned;
+    $('pt').textContent=s.phase==='fine'?s.total_fine_points:s.total_points;
+    $('pimg').textContent=s.images_fetched;
+    $('pnc').textContent=s.no_coverage?`No SV: ${s.no_coverage}`:'';
+    $('s-f').textContent=s.images_fetched; $('s-c').textContent=s.images_compared||s.images_fetched; $('s-m').textContent=s.matches;
+
+    if(s.results.length>lastRC){
+      for(let i=lastRC;i<s.results.length;i++) addMarker(s.results[i]);
+      lastRC=s.results.length;
+    }
+    if(s.completed||s.error){
+      clearInterval(poll);$('btn-go').style.display='block';$('btn-stop').style.display='none';
+      if(s.results.length)$('btn-csv').style.display='block';
+      if(s.error)alert(s.error);
+    }
+  });
+}
+
+function addMarker(r){
+  const sc=r.score, col=sc>=80?'#06d6a0':sc>=65?'#f59e0b':'#ef4444', sz=Math.max(8,Math.min(18,sc/5));
+  const icon=L.divIcon({className:'',html:`<div style="width:${sz}px;height:${sz}px;background:${col};border:2px solid rgba(255,255,255,.8);border-radius:50%;box-shadow:0 0 6px ${col}80"></div>`,iconSize:[sz,sz],iconAnchor:[sz/2,sz/2]});
+  const m=L.marker([r.lat,r.lng],{icon}).addTo(map);
+  let link=r.sv_url||r.gmaps||''; let linkTxt=mode==='mapillary'?'View on Mapillary':mode==='baidu'?'View on Baidu Maps':'Open in Maps';
+  let pop=`<div class="rp"><div class="sc ${sc>=75?'hi':'md'}">${sc}%</div><div class="mt">`;
+  for(const[k,v] of Object.entries(r.scores||{})) pop+=`<span>${k}:</span><span>${v}%</span>`;
+  pop+=`</div><div style="font-size:10px;color:var(--dim)">${r.phase}${r.heading!=null?' | '+r.heading+'°':''}</div>`;
+  if(link) pop+=`<a href="${link}" target="_blank">${linkTxt} ↗</a>`;
+  if(r.gmaps&&r.sv_url&&r.gmaps!==r.sv_url) pop+=`<a href="${r.gmaps}" target="_blank">Google Maps ↗</a>`;
+  pop+='</div>';
+  m.bindPopup(pop); markers.push(m);
+}
+
+function cancelScan(){if(scanId)fetch('/cancel/'+scanId,{method:'POST'})}
+function exportCSV(){if(scanId)window.open('/export/'+scanId)}
+</script>
+</body>
+</html>
