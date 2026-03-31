@@ -4,8 +4,6 @@ Street-view, satellite, and camera recon for figuring out where the hell an imag
 
 *by Eph at [ephemeradev.net](https://ephemeradev.net) · est. 2026 · Open Source 💜*
 
-Repo: [ephemera02/GeoScout](https://github.com/ephemera02/GeoScout)
-
 GeoScout is for when you have a photo, a screenshot, a frame from a video, or some cursed little image fragment and you need to stop guessing. Upload the reference, draw a search box, choose your surface, and let the app sweep for visual matches instead of manually dragging around maps until your soul leaves your body.
 
 It runs as a browser app, works locally, can be self-hosted on clearnet, and now has a proper command-center UI instead of looking like a generic chatbot sidebar somebody shipped at 3 a.m. and called a day.
