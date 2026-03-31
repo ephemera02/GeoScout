@@ -1,247 +1,183 @@
-# 🌍 G E O S C O U T 🌍
+﻿# GeoScout
 
-**Image Geolocation Through Street-Level Comparison**
+Street-view, satellite, and camera recon for figuring out where the hell an image came from.
 
-*by Eph at ephemeradev.net · est. 2026 · Open Source 💜*
+*by Eph at [ephemeradev.net](https://ephemeradev.net) · est. 2026 · Open Source 💜*
 
----
+Repo: [ephemera02/GeoScout](https://github.com/ephemera02/GeoScout)
 
-Upload a photo. Draw a search area on a map. Find exactly where it was taken.
+GeoScout is for when you have a photo, a screenshot, a frame from a video, or some cursed little image fragment and you need to stop guessing. Upload the reference, draw a search box, choose your surface, and let the app sweep for visual matches instead of manually dragging around maps until your soul leaves your body.
 
-Four imagery sources, four comparison algorithms, zero guesswork. Built for investigators, journalists, and researchers who need to verify locations from imagery and don't have time to scroll through Google Maps squinting at screenshots.
+It runs as a browser app, works locally, can be self-hosted on clearnet, and now has a proper command-center UI instead of looking like a generic chatbot sidebar somebody shipped at 3 a.m. and called a day.
 
----
+## What She Does
 
-## ✦ How It Works
+- Uploads a reference image and strips metadata on ingest
+- Searches a drawn area across multiple imagery sources
+- Scores candidate images with multiple comparison methods
+- Drops likely matches straight onto the map
+- Pulls in public camera-source data
+- Exports session data and CSV results when you want receipts
 
-You have an image. Maybe it's from a social media post, a screenshot from a video, a photo someone sent you, whatever. You don't know where it was taken, but you have a general idea of the region.
+## How It Works
 
-1. Upload the image
-2. Draw a rectangle on the map covering your search area
-3. Pick a provider (Mapillary, Google Street View, Baidu, or satellite)
-4. Hit scan
+1. Upload your reference image.
+2. Search a place or draw a target area on the map.
+3. Pick the imagery surface you want to sweep.
+4. Let GeoScout run the grid and start dropping matches.
 
-GeoScout pulls existing street-level or satellite imagery from across that area and runs **four comparison algorithms** against your reference photo: perceptual hashing for structural similarity, SSIM for luminance and contrast, color histogram matching for color profiles, and template matching for specific visual features. Each method gets a weighted score. Anything above your threshold shows up as a pin on the map with a direct link to view the matched image at that exact location and heading.
+Under the hood it combines:
 
-It does two passes. Coarse grid first to find hot zones, then a fine grid around anything promising to narrow down to building-level precision. You watch it work in real time.
+- `pHash`
+- `SSIM`
+- `Color histogram`
+- `Template matching`
 
----
+You can adjust weights, threshold, spacing, headings, and provider settings depending on how chaotic your source image is.
 
-## ✦ Search Modes
+## Search Modes
 
-**Mapillary** · Free, Global
+### Mapillary
 
-> Crowdsourced street-level imagery with 2+ billion photos. Free API token, no cost. Best coverage in Western cities and Europe. This is the default for most searches and honestly it's kind of insane that it's free.
+Free, global, and usually the first place to start. If you want street-level imagery without instantly thinking about billing, this is your girl.
 
-**Google Street View** · Paid, No China
+### Google Street View
 
-> Highest quality imagery available. Two-pass scan with configurable headings (N/S/E/W on coarse, all 8 cardinal directions on fine). $7 per 1,000 images, but Google gives you $200/month free credit, so roughly 28,000 images before you pay a cent.
+Sharper imagery, more control, more enterprise energy, and yes, potentially billable. Good when you want stronger street coverage and finer heading control and are willing to let Google put a price tag on your curiosity.
 
-**Baidu Panorama** · Free Tier, China
+### Baidu Panorama
 
-> Best coverage of Chinese cities by a mile. Handles WGS84 to BD09 coordinate conversion automatically so you don't have to think about China's coordinate offset bullshit. Requires a Baidu developer key.
+For China coverage, because pretending Google solves every geography problem is loser behavior. GeoScout handles the coordinate conversion mess for you so you do not have to manually babysit that bullshit.
 
-**Satellite** · Free, Overhead
+### Satellite
 
-> Overhead imagery comparison for aerial and satellite photos. Pulls from ESRI World Imagery, Sentinel-2, or Google Satellite tiles. Configurable zoom levels from region scale down to individual buildings. Coarse pass finds the neighborhood; fine pass finds the roof.
+For overhead imagery, rooftops, compounds, lots, weird aerial references, and all the times street-level coverage is useless or flat-out gives you nothing.
 
----
+## Camera Intelligence
 
-## ✦ Features
+GeoScout can also layer in camera data from:
 
-**4 Comparison Algorithms**
+- `OSM`
+- `Shodan`
+- `Insecam`
 
-> pHash (perceptual hashing), SSIM (structural similarity index), color histogram intersection, and normalized cross-correlation template matching. Each one catches different things. You can toggle them on/off and adjust their weights depending on what your reference image looks like.
+If a feed URL is reachable, you can also compare a camera frame against your uploaded reference.
 
-**Interactive Map with Draw-to-Search**
+## Current Tooling
 
-> Leaflet map with satellite and street base layers. Draw a rectangle over your search area. The estimate panel tells you how many images will be scanned and what it'll cost (if anything) before you commit.
+- Draw-to-search workflow
+- Live scan progress
+- Match markers with source links
+- Metadata-stripped uploads
+- Clean reference download
+- Session import/export
+- Match CSV export
+- Cost estimation before scanning
+- Map layout controls for hiding the command center and overlays
 
-**Real-Time Progress**
+## Running It
 
-> Watch the scan run. Progress bar, phase indicator (coarse/fine), images fetched, matches found. Results appear as color-coded pins on the map as they're discovered. Green for strong matches, amber for moderate, red for weak.
+### Local
 
-**Two-Pass Scanning**
+Install dependencies:
 
-> Coarse grid covers the whole area at wider spacing. Anything that scores near your threshold triggers a fine-grid sweep of the surrounding area at tighter intervals and more heading angles. This is how you go from "somewhere in this neighborhood" to "this specific intersection facing northwest."
-
-**Configurable Everything**
-
-> Threshold sensitivity, grid spacing (coarse and fine), heading angles, rate limits, max results. Tune it for your use case. Searching a whole city? Widen the coarse grid. Narrowing down a single block? Crank the fine spacing down to 10 meters.
-
-**CSV Export**
-
-> Export all results with lat/lng, scores per algorithm, heading, phase, and direct links to view each match on its respective platform. Take it into a spreadsheet, a GIS tool, a report, whatever.
-
-**Cost Estimation**
-
-> Before you scan, GeoScout calculates the estimated image count and cost for paid providers. For Google SV, it shows what percentage falls under the free tier. No surprises.
-
-**Fully Local**
-
-> Runs on localhost. All Leaflet map libraries are bundled in the static folder; no CDN calls, no external dependencies at runtime. Your reference images stay on your machine. The only outbound requests are to the imagery APIs you choose to use.
-
----
-
-## 🚀 Running It
-
-### Don't want to install anything?
-
-GeoScout is live as a Tor hidden service. Open [Tor Browser](https://www.torproject.org/download/) and go to:
-
-```
-rbu3z2ag3w4q7el6gnssyvwdv2ig3vuo2q7rldrkkm3th2qftfu76kad.onion
+```bash
+pip install -r requirements.txt
 ```
 
-Same tool, same UI, no install. You just need Tor Browser.
+Run:
 
----
+```bash
+python app.py
+```
 
-### Option A: Download the .exe
+Open:
 
-Grab the latest zip from [**Releases**](../../releases), extract it, and double-click `GeoScout.exe`. It'll open your browser automatically. No Python, no install, no setup. That's it.
+```text
+http://localhost:5001
+```
 
-**Note:** The exe runs a local web server on your machine. It opens on port 5001, and you interact with it through your browser. It's not a native GUI app; it's a web app that happens to live on your machine. Nothing leaves your computer except the API calls you choose to make.
+### Public Deployment
 
-### Option B: Run from Source
+Current HTTPS deployment:
 
-If you want the raw files, the full code is right here in this repo.
+[https://geoscout.ephemeradev.net/](https://geoscout.ephemeradev.net/)
 
-1. Install Python 3.10+ from [python.org](https://python.org)
-   * **CHECK "Add Python to PATH"** during install or I swear to god
-2. Install dependencies:
-   ```
-   pip install flask pillow numpy
-   ```
-3. Clone or download this repo
-4. Run it:
-   ```
-   python app.py
-   ```
-5. Open `http://localhost:5001` in your browser
-6. That's it. It's running.
+### Self-Hosting
 
-### Option C: Build your own .exe
+GeoScout is just a Flask app behind a reverse proxy. Put it behind Caddy or Nginx and let the proxy deal with the public edge.
 
-If you want to build the executable yourself instead of trusting mine (respect):
+Minimal Caddy example:
 
-1. Do Option B first to make sure it works
-2. Double-click `build.bat`, or run it manually:
-   ```
-   pip install pyinstaller
-   pyinstaller --onedir --noconsole --name GeoScout app.py
-   ```
-3. Copy `templates/` and `static/` into the `dist/GeoScout/` folder
-4. Your exe is in `dist/GeoScout/`. Zip that whole folder if you want to share it.
+```caddy
+geoscout.yourdomain.com {
+    reverse_proxy 127.0.0.1:5001
+}
+```
 
----
+Minimal Nginx example:
 
-## 🔑 API Keys
+```nginx
+server {
+    listen 80;
+    server_name geoscout.yourdomain.com;
 
-You bring your own. GeoScout doesn't ship with any keys, doesn't store them anywhere persistent, and doesn't send them anywhere except the provider you selected. They live in your browser session and nowhere else.
+    location / {
+        proxy_pass http://127.0.0.1:5001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
 
-**Mapillary (Free)**
+## Keys
 
-> Sign up at [mapillary.com/dashboard/developers](https://www.mapillary.com/dashboard/developers). Create a token as it costs nothing and has unlimited use.
+GeoScout does not ship with provider keys. Bring your own.
 
-**Google Street View (Paid with Free Tier)**
+- `Mapillary` token for Mapillary scans
+- `Google` API key for Google Street View and Google satellite usage
+- `Baidu` key for Baidu panorama usage
+- `Shodan` key for Shodan camera searches
 
-> Get a key at [console.cloud.google.com](https://console.cloud.google.com/apis/credentials). Enable the Street View Static API. You get $200/month free, which is roughly 28,000 image fetches.
+The backend now rejects keyed scan modes if you try to start them with no key, because fake confidence is ugly.
 
-**Baidu (Free Tier)**
+## Project Shape
 
-> Create a developer account at [lbs.baidu.com](https://lbs.baidu.com/apiconsole/key). Get an `ak` key. Free tier is available; success in obtaining the key is not guaranteed.
+- `app.py` - backend routes, scan engines, comparison logic, camera-source logic
+- `index.html` - main frontend template
+- `requirements.txt` - Python dependencies
+- `static/` - bundled frontend assets
+- `uploads/` - local uploaded references
+- `results/` - generated outputs
 
-**Satellite**
+## Notes
 
-> ESRI and Sentinel-2 sources are free, no key needed. Google Satellite uses the same API key as Google Street View.
+- Uploaded references are stored locally.
+- External providers can still be flaky because third-party services love ruining everyone's day.
+- Paid providers may charge you depending on usage.
+- This is an investigative tool, not a toy, even if the UI now has better hair.
+- If something breaks, it is probably either an API, a rate limit, or some external service deciding to be deeply annoying.
 
----
+## Intended Use
 
-## 📁 Project Structure
+OSINT, verification, journalism, research, location analysis, and generally being more correct than the person loudly guessing in the group chat.
 
-| File | What It Does |
-| --- | --- |
-| `app.py` | The whole backend. All four search engines, comparison algorithms, coordinate conversion, scan management, and API routes. 499 lines on v1.0. |
-| `templates/index.html` | The whole frontend. Leaflet map, provider panels, progress tracking, and result rendering. 404 lines. |
-| `requirements.txt` | flask, pillow, numpy is the whole dependency list. |
-| `build.bat` | One-click exe builder. Double-click it and walk away. |
-| `static/` | Leaflet JS/CSS, Leaflet.Draw plugin, marker icons. All bundled locally. |
-| `uploads/` | Where reference images go temporarily during a scan. Created automatically. |
-| `results/` | Output directory. Created automatically. |
-
-Two files. That's the entire application. Backend and frontend. I'm not sorry.
-
----
-
-## ⚠️ Disclaimers
-
-**API Keys & Charges**
-
-> Your API keys never leave your machine except to hit the provider you chose. I am not responsible for your Google bill. The cost estimator is approximate. Check your provider dashboard for actual billing.
-
-**No Warranty**
-
-> This software is provided as-is, and it works for me. If it doesn't work for you, open an issue with what happened, and I'll look at it. If you just say "it's broken," I will stare at the wall and contemplate how I got here in life.
-
-**Use Responsibly**
-
-> This is an investigative tool that I built because I needed it for real work. Use it for journalism, research, OSINT, verification, and accountability. Please don't be a creep, I've investigated enough of those.
-
-**Privacy**
-
-> GeoScout has zero telemetry, zero analytics, zero tracking. Your uploaded images are stored locally in the `uploads/` folder during a scan, and that's it. Nothing phones home.
-
----
-
-## 🐾 FAQ
-
-**"What do I actually need to run this?"**
-
-> Python 3.10+, three pip packages, and a browser. That's it.
-
-**"Which mode should I use?"**
-
-> Start with Mapillary since it's free and global. If you need better image quality or coverage in a specific area, try Google SV. If you're searching in China, use Baidu. If you're working from overhead/aerial imagery, use Satellite.
-
-**"What if I get too many false positives?"**
-
-> Raise the threshold. 55% is the default; bump it to 65-70% if you're getting noise. You can also disable comparison methods that aren't useful for your reference image. Color histogram is great for outdoor scenes but useless if your image is mostly grey concrete.
-
-**"Can I search the whole planet?"**
-
-> Technically yes, but please don't. The coarse grid generates sample points based on your search area size. Drawing a rectangle over all of Europe will create hundreds of thousands of points and either take forever or hit API rate limits. Keep your search areas reasonable. City-scale to neighborhood-scale works best.
-
-**"Something is broken"**
-
-> Open an issue and tell me what you did, what happened, and what you expected. Screenshots help, logs from the terminal help more, and vague complaints help no one and you will be fed to The Cat.
-
----
-
-## 💬 Links
-
-🌐 **Website:** [ephemeradev.net](https://ephemeradev.net)
-
-💜 **Support development:** [ephemeradev.net](https://ephemeradev.net); tips welcome, never required
-
----
+Use it legally. Use it responsibly. Do not use it to be a creep.
 
 ## Credits
 
-**Created by Eph at Ephemera**
+Created by Eph / Ephemera.
 
-Built with UI assistance from Claude (Anthropic). Some features adapted from freely licensed code by various contributors who published their work for others to use and build on, the rest is my original work.
+Built with Flask, Pillow, NumPy, Leaflet, and Leaflet.Draw. Imagery and camera data come from external providers including Mapillary, Google, Baidu, ESRI, Sentinel-2, OpenStreetMap, Shodan, and Insecam.
 
-Leaflet and Leaflet.Draw are open source libraries by their respective authors. Imagery data comes from Mapillary, Google, Baidu, ESRI, and Sentinel-2/EOX.
+Main site:
 
----
+[https://ephemeradev.net/](https://ephemeradev.net/)
 
 ## License
 
-Custom license. Run it locally, modify it, and share the code; don't host your own public instance. See [LICENSE](LICENSE) for the full text.
+See [LICENSE](LICENSE).
 
----
-
-*"She believed she'd lost the source code forever and then she found the files."*
-
-🐾
+If the source image is being a little bastard, raise the threshold, tighten the search area, and change surfaces before you assume the whole app is lying to you.

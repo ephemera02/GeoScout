@@ -26,6 +26,11 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: Sync the current root index into Flask's templates folder
+echo   Syncing template files...
+if not exist templates mkdir templates
+copy /Y index.html templates\index.html >nul
+
 :: Copy templates and static into the dist folder
 echo   Copying templates and static files...
 xcopy /E /I /Y templates dist\GeoScout\templates >nul

@@ -1,32 +1,55 @@
 #!/usr/bin/env python3
 """
-GeoScout v2.0 - Street-Level Image Search
-Upload a photo, draw a search area, find where it was taken.
+GeoScout v3.0 - Street-Level Image Search + Camera Intelligence
 
 Providers:
   - Mapillary (free, crowdsourced, global)
   - Google Street View (paid, best quality, no China)
   - Baidu Panorama (free-ish, best China coverage)
   - Satellite tiles (ESRI/Sentinel/Google overhead imagery)
+
+Camera Sources:
+  - OpenStreetMap/Overpass (mapped camera locations, free)
+  - Shodan (internet-facing cameras, API key required)
+  - Insecam (publicly accessible cameras, no key)
+
+Geocoding:
+  - Nominatim/OpenStreetMap (address/city/coordinate lookup, free)
 """
 
-import os, sys, io, json, math, time, hashlib, threading, uuid, csv
+import os, io, json, math, time, hashlib, threading, uuid, csv, re
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, send_from_directory, send_file
-from PIL import Image
+from PIL import Image, ImageOps
 import numpy as np
 import urllib.request
+import urllib.parse
 
-if getattr(sys, 'frozen', False):
-    BASE_DIR = os.path.dirname(sys.executable)
-else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-app = Flask(__name__,
-            template_folder=os.path.join(BASE_DIR, 'templates'),
-            static_folder=os.path.join(BASE_DIR, 'static'))
+app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
+@app.after_request
+def apply_security_headers(resp):
+    resp.headers['X-Content-Type-Options'] = 'nosniff'
+    resp.headers['X-Frame-Options'] = 'DENY'
+    resp.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    resp.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
+    resp.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob: https: http:; "
+        "connect-src 'self' https:; "
+        "font-src 'self' data:; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "frame-ancestors 'none'"
+    )
+    if request.is_secure or request.headers.get('X-Forwarded-Proto') == 'https':
+        resp.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    return resp
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(BASE_DIR, 'uploads')
 RESULT_DIR = os.path.join(BASE_DIR, 'results')
 STATIC_DIR = os.path.join(BASE_DIR, 'static')
@@ -119,7 +142,7 @@ def compare_images(ref, cand, weights):
 
 def fetch_image(url, timeout=15):
     try:
-        req = urllib.request.Request(url, headers={'User-Agent':'GeoScout/2.0'})
+        req = urllib.request.Request(url, headers={'User-Agent':'GeoScout/3.0'})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = resp.read()
             if len(data)<1000: return None
@@ -152,6 +175,328 @@ def new_scan(sid, mode):
             'no_coverage':0,'matches':0,'results':[],'completed':False,'cancelled':False,
             'error':None,'started':datetime.now().isoformat()}
 
+def save_clean_upload(file_storage, ext):
+    raw = file_storage.read()
+    if not raw:
+        raise ValueError('Empty upload')
+
+    uid = hashlib.md5(raw).hexdigest()[:8]
+    fmt_map = {
+        '.jpg': 'JPEG',
+        '.jpeg': 'JPEG',
+        '.png': 'PNG',
+        '.webp': 'WEBP',
+        '.bmp': 'BMP',
+    }
+    fmt = fmt_map[ext]
+    img = Image.open(io.BytesIO(raw))
+    img.load()
+    img = ImageOps.exif_transpose(img)
+
+    if fmt in ('JPEG', 'BMP'):
+        img = img.convert('RGB')
+    elif fmt == 'PNG' and img.mode not in ('RGB', 'RGBA', 'L', 'LA'):
+        img = img.convert('RGBA')
+    elif fmt == 'WEBP' and img.mode not in ('RGB', 'RGBA'):
+        img = img.convert('RGBA' if 'A' in img.mode else 'RGB')
+
+    filename = f"{uid}{ext}"
+    path = os.path.join(UPLOAD_DIR, filename)
+    save_args = {}
+    if fmt == 'JPEG':
+        save_args.update({'quality': 95, 'optimize': True})
+    elif fmt == 'PNG':
+        save_args.update({'optimize': True})
+    elif fmt == 'WEBP':
+        save_args.update({'quality': 95, 'method': 6})
+
+    img.save(path, format=fmt, **save_args)
+    with Image.open(path) as clean:
+        width, height = clean.size
+    return filename, width, height
+
+# ── GEOCODING (Nominatim / OpenStreetMap) ────────────────────
+
+def geocode_query(query):
+    """Convert an address, city name, or coordinate pair to lat/lng with bounds."""
+    query = query.strip()
+    # Check for raw coordinates first (e.g. "41.8781, -87.6298" or "41.8781 -87.6298")
+    coord = re.match(r'^(-?\d+\.?\d*)\s*[,\s]\s*(-?\d+\.?\d*)$', query)
+    if coord:
+        lat, lng = float(coord.group(1)), float(coord.group(2))
+        d = 0.005  # ~500m box around point
+        return {'lat':lat,'lng':lng,'found':True,'display':f'{lat:.5f}, {lng:.5f}',
+                'bounds':{'south':lat-d,'west':lng-d,'north':lat+d,'east':lng+d}}
+    # Otherwise hit Nominatim
+    encoded = urllib.parse.quote(query)
+    url = (f"https://nominatim.openstreetmap.org/search?q={encoded}"
+           f"&format=json&limit=5&addressdetails=1")
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent':'GeoScout/3.0','Accept-Language':'en'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            results = []
+            for r in data:
+                lat, lng = float(r['lat']), float(r['lon'])
+                bb = r.get('boundingbox', [])
+                if bb and len(bb) == 4:
+                    bounds = {'south':float(bb[0]),'north':float(bb[1]),'west':float(bb[2]),'east':float(bb[3])}
+                else:
+                    bounds = {'south':lat-0.01,'west':lng-0.01,'north':lat+0.01,'east':lng+0.01}
+                results.append({'lat':lat,'lng':lng,'found':True,
+                    'display':r.get('display_name',''),'type':r.get('type',''),
+                    'bounds':bounds})
+            if results:
+                return results[0] if len(results)==1 else {'results':results,'found':True}
+    except: pass
+    return {'found':False,'error':'Location not found. Try a different search.'}
+
+# ── OSM CAMERAS (Overpass API) ───────────────────────────────
+
+def osm_cameras(bounds):
+    """Query OpenStreetMap for mapped surveillance camera locations."""
+    bbox = f"{bounds['south']},{bounds['west']},{bounds['north']},{bounds['east']}"
+    query = (f'[out:json][timeout:30];'
+             f'(node["man_made"="surveillance"]({bbox});'
+             f'way["man_made"="surveillance"]({bbox}););'
+             f'out center body;')
+    url = f"https://overpass-api.de/api/interpreter?data={urllib.parse.quote(query)}"
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent':'GeoScout/3.0'})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+            cameras = []
+            for el in data.get('elements', []):
+                lat = el.get('lat') or el.get('center',{}).get('lat')
+                lng = el.get('lon') or el.get('center',{}).get('lon')
+                if not lat or not lng: continue
+                tags = el.get('tags', {})
+                cameras.append({
+                    'lat':lat, 'lng':lng, 'source':'osm',
+                    'type': tags.get('surveillance:type', 'unknown'),
+                    'zone': tags.get('surveillance:zone', 'unknown'),
+                    'operator': tags.get('operator', ''),
+                    'mount': tags.get('camera:mount', ''),
+                    'direction': tags.get('camera:direction', ''),
+                    'description': tags.get('description', ''),
+                    'osm_id': el.get('id', ''),
+                })
+            return {'cameras':cameras,'count':len(cameras)}
+    except Exception as e:
+        return {'cameras':[],'count':0,'error':str(e)}
+
+# ── SHODAN CAMERAS ───────────────────────────────────────────
+
+def shodan_search(bounds, api_key, query_extra='', max_results=100):
+    """Search Shodan for internet-facing cameras within bounds."""
+    clat = (bounds['south']+bounds['north'])/2
+    clng = (bounds['west']+bounds['east'])/2
+    # Approximate radius in km from bounds
+    lat_km = (bounds['north']-bounds['south'])*111
+    lng_km = (bounds['east']-bounds['west'])*111*math.cos(math.radians(clat))
+    radius = max(1, min(100, int(max(lat_km, lng_km)/2)))
+
+    # Shodan search filters for cameras
+    base_queries = [
+        f'webcam geo:{clat},{clng},{radius}',
+        f'camera geo:{clat},{clng},{radius}',
+        f'"Server: IP Webcam" geo:{clat},{clng},{radius}',
+    ]
+    if query_extra:
+        base_queries = [f'{query_extra} geo:{clat},{clng},{radius}']
+
+    cameras = []
+    seen_ips = set()
+
+    for q in base_queries:
+        if len(cameras) >= max_results: break
+        encoded = urllib.parse.quote(q)
+        url = f"https://api.shodan.io/shodan/host/search?key={api_key}&query={encoded}&minify=false"
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent':'GeoScout/3.0'})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read())
+                for match in data.get('matches', []):
+                    loc = match.get('location', {})
+                    ip = match.get('ip_str', '')
+                    if not loc.get('latitude') or not loc.get('longitude'): continue
+                    if ip in seen_ips: continue
+                    seen_ips.add(ip)
+
+                    port = match.get('port', 80)
+                    ssl = 'ssl' in match
+                    proto = 'https' if ssl else 'http'
+
+                    cam = {
+                        'lat': loc['latitude'], 'lng': loc['longitude'],
+                        'source': 'shodan', 'ip': ip, 'port': port,
+                        'org': match.get('org', ''),
+                        'product': match.get('product', ''),
+                        'os': match.get('os', ''),
+                        'hostnames': match.get('hostnames', []),
+                        'city': loc.get('city', ''),
+                        'country': loc.get('country_name', ''),
+                        'last_update': match.get('timestamp', ''),
+                        'access_url': f"{proto}://{ip}:{port}",
+                        'shodan_url': f"https://www.shodan.io/host/{ip}",
+                    }
+                    # Check for screenshot
+                    if match.get('opts', {}).get('screenshot'):
+                        cam['has_screenshot'] = True
+                        cam['screenshot_data'] = match['opts']['screenshot'].get('data', '')
+                        cam['screenshot_mime'] = match['opts']['screenshot'].get('mime', 'image/jpeg')
+
+                    # Try to determine if it's an accessible camera stream
+                    banner = match.get('data', '').lower()
+                    if any(k in banner for k in ['mjpg','mjpeg','snapshot','video','stream','jpeg']):
+                        cam['likely_stream'] = True
+                        # Common snapshot paths
+                        for path in ['/snapshot.jpg','/shot.jpg','/image.jpg','/mjpg/video.mjpg',
+                                     '/video.mjpg','/cgi-bin/snapshot.cgi','/snap.jpg','/capture',
+                                     '/jpg/image.jpg','/axis-cgi/jpg/image.cgi']:
+                            cam.setdefault('try_urls', []).append(f"{proto}://{ip}:{port}{path}")
+                    else:
+                        cam['likely_stream'] = False
+
+                    cameras.append(cam)
+        except Exception as e:
+            if 'Access denied' in str(e) or '401' in str(e):
+                return {'cameras':[],'error':'Invalid Shodan API key.'}
+            continue
+
+    return {'cameras':cameras[:max_results],'count':len(cameras),'radius_km':radius}
+
+# ── INSECAM ──────────────────────────────────────────────────
+
+# Country codes used by Insecam
+INSECAM_COUNTRIES = {
+    'US':'United States','JP':'Japan','DE':'Germany','IT':'Italy',
+    'FR':'France','RU':'Russia','KR':'South Korea','GB':'United Kingdom',
+    'NL':'Netherlands','CZ':'Czech Republic','TR':'Turkey','ES':'Spain',
+    'UA':'Ukraine','PL':'Poland','IN':'India','MX':'Mexico','BR':'Brazil',
+    'CA':'Canada','AR':'Argentina','TW':'Taiwan','AT':'Austria','IL':'Israel',
+    'BG':'Bulgaria','CH':'Switzerland','NO':'Norway','SE':'Sweden','RO':'Romania',
+    'BE':'Belgium','VN':'Vietnam','CN':'China','TH':'Thailand','IR':'Iran',
+    'FI':'Finland','IE':'Ireland','DK':'Denmark','HU':'Hungary','ZA':'South Africa',
+    'CL':'Chile','PT':'Portugal','AU':'Australia','CO':'Colombia','MY':'Malaysia',
+    'ID':'Indonesia','PH':'Philippines','SG':'Singapore','HK':'Hong Kong',
+}
+
+def insecam_search(country_code='', page=1):
+    """Scrape Insecam for publicly accessible camera feeds by country."""
+    cameras = []
+    if not country_code:
+        return {'cameras':[],'error':'Country code required.'}
+
+    url = f"http://www.insecam.org/en/bycountry/{country_code}/?page={page}"
+    try:
+        req = urllib.request.Request(url, headers={
+            'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Referer':'http://www.insecam.org/',
+        })
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            html = resp.read().decode('utf-8', errors='ignore')
+
+            # Extract total pages
+            total_match = re.findall(r'pagenavigator\("[^"]*",\s*(\d+)', html)
+            total_pages = int(total_match[0]) if total_match else 1
+
+            # Extract camera image URLs (these contain the camera IPs)
+            img_urls = re.findall(r'<img[^>]+src="(http[^"]+)"[^>]*>', html)
+            # Filter to only camera feed URLs (not site assets)
+            feed_urls = [u for u in img_urls if re.match(r'https?://\d+\.\d+\.\d+\.\d+', u)]
+
+            # Extract camera detail page links
+            cam_links = re.findall(r'<a[^>]+href="(/en/view/\d+/)"', html)
+
+            # Extract coordinates if available (from inline scripts)
+            coords = re.findall(r'setLatLng\(\[(-?\d+\.?\d*),\s*(-?\d+\.?\d*)\]\)', html)
+            # Also try alternative coordinate patterns
+            if not coords:
+                coords = re.findall(r'latitude["\s:=]+(-?\d+\.?\d*)[^0-9]+longitude["\s:=]+(-?\d+\.?\d*)', html)
+
+            for i, link in enumerate(cam_links):
+                cam_id = re.search(r'/view/(\d+)/', link)
+                cam = {
+                    'source': 'insecam',
+                    'cam_id': cam_id.group(1) if cam_id else '',
+                    'page_url': f"http://www.insecam.org{link}",
+                    'thumbnail': feed_urls[i] if i < len(feed_urls) else '',
+                    'country': country_code,
+                }
+                # Extract IP from feed URL
+                if cam['thumbnail']:
+                    ip_match = re.match(r'https?://(\d+\.\d+\.\d+\.\d+)', cam['thumbnail'])
+                    if ip_match:
+                        cam['ip'] = ip_match.group(1)
+                        cam['stream_url'] = cam['thumbnail']
+
+                # Assign coordinates if available
+                if i < len(coords):
+                    cam['lat'] = float(coords[i][0])
+                    cam['lng'] = float(coords[i][1])
+
+                cameras.append(cam)
+
+            return {'cameras':cameras,'count':len(cameras),
+                    'page':page,'total_pages':total_pages,'country':country_code}
+    except Exception as e:
+        return {'cameras':[],'error':str(e)}
+
+def insecam_camera_detail(cam_id):
+    """Get detailed info for a single Insecam camera including coordinates."""
+    url = f"http://www.insecam.org/en/view/{cam_id}/"
+    try:
+        req = urllib.request.Request(url, headers={
+            'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer':'http://www.insecam.org/',
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            html = resp.read().decode('utf-8', errors='ignore')
+            result = {'cam_id': cam_id}
+
+            # Coordinates
+            lat = re.search(r'latitude["\s:=]+(-?\d+\.?\d*)', html)
+            lng = re.search(r'longitude["\s:=]+(-?\d+\.?\d*)', html)
+            if lat and lng:
+                result['lat'] = float(lat.group(1))
+                result['lng'] = float(lng.group(1))
+
+            # Stream URL
+            stream = re.search(r'(https?://\d+\.\d+\.\d+\.\d+[^"\'<>\s]*)', html)
+            if stream:
+                result['stream_url'] = stream.group(1)
+                ip_match = re.match(r'https?://(\d+\.\d+\.\d+\.\d+)', result['stream_url'])
+                if ip_match:
+                    result['ip'] = ip_match.group(1)
+
+            # Location info
+            loc = re.findall(r'<div[^>]*>([^<]*(?:Country|City|Region|Timezone)[^<]*)</div>', html)
+            for l in loc:
+                if 'Country' in l: result['country_name'] = l.replace('Country:','').strip()
+                if 'City' in l: result['city'] = l.replace('City:','').strip()
+                if 'Region' in l: result['region'] = l.replace('Region:','').strip()
+
+            return result
+    except:
+        return {'cam_id':cam_id,'error':'Could not fetch camera details.'}
+
+# ── Camera feed comparison ───────────────────────────────────
+
+def compare_camera_feed(ref_path, feed_url, weights):
+    """Fetch a frame from a camera feed URL and compare against reference."""
+    ref = Image.open(ref_path).convert('RGB')
+    frame = fetch_image(feed_url, timeout=10)
+    if not frame:
+        return {'error':'Could not fetch camera frame.','url':feed_url}
+    score, scores = compare_images(ref, frame, weights)
+    return {
+        'score': round(score*100, 1),
+        'scores': {k:round(v*100,1) for k,v in scores.items()},
+        'url': feed_url,
+    }
+
 # ── MAPILLARY (free) ─────────────────────────────────────────
 
 def mly_query(bounds, token, limit=2000):
@@ -160,7 +505,7 @@ def mly_query(bounds, token, limit=2000):
          f"&fields=id,thumb_1024_url,thumb_256_url,computed_geometry,compass_angle,captured_at"
          f"&bbox={bbox}&limit={min(limit,2000)}")
     try:
-        req=urllib.request.Request(url, headers={'User-Agent':'GeoScout/2.0'})
+        req=urllib.request.Request(url, headers={'User-Agent':'GeoScout/3.0'})
         with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read()).get('data',[])
     except: return []
@@ -169,7 +514,6 @@ def mly_search(bounds, token):
     area = (bounds['east']-bounds['west'])*(bounds['north']-bounds['south'])
     if area <= 0.008:
         return mly_query(bounds, token)
-    # Split into sub-boxes
     all_imgs=[]; step=0.08
     lat=bounds['south']
     while lat<bounds['north']:
@@ -224,7 +568,7 @@ def run_google(sid, ref, bounds, params):
     rl=params.get('rate_limit',50)/1000; mx=params.get('max_results',200)
     def meta(lat,lng):
         try:
-            req=urllib.request.Request(f"https://maps.googleapis.com/maps/api/streetview/metadata?location={lat},{lng}&key={key}",headers={'User-Agent':'GeoScout/2.0'})
+            req=urllib.request.Request(f"https://maps.googleapis.com/maps/api/streetview/metadata?location={lat},{lng}&key={key}",headers={'User-Agent':'GeoScout/3.0'})
             with urllib.request.urlopen(req,timeout=10) as r:
                 d=json.loads(r.read())
                 if d.get('status')=='OK':
@@ -292,7 +636,7 @@ def run_baidu(sid, ref, bounds, params):
         return f"https://api.map.baidu.com/panorama/v2?ak={key}&width={w}&height={ht}&location={bn},{bl}&heading={h}&fov=90"
     def has_cov(bl,bn):
         try:
-            req=urllib.request.Request(f"https://api.map.baidu.com/panorama/v2?ak={key}&width=64&height=32&location={bn},{bl}&fov=90",headers={'User-Agent':'GeoScout/2.0'})
+            req=urllib.request.Request(f"https://api.map.baidu.com/panorama/v2?ak={key}&width=64&height=32&location={bn},{bl}&fov=90",headers={'User-Agent':'GeoScout/3.0'})
             with urllib.request.urlopen(req,timeout=10) as r: return len(r.read())>2000
         except: return False
     hc=[0,90,180,270]; hf=[0,45,90,135,180,225,270,315]
@@ -440,8 +784,8 @@ def index(): return render_template('index.html')
 @app.route('/static/<path:path>')
 def serve_static(path): return send_from_directory(STATIC_DIR, path)
 
-@app.route('/favicon.ico')
-def favicon(): return send_from_directory(BASE_DIR, 'Geoscout_icon.ico', mimetype='image/x-icon')
+@app.route('/uploads/<path:path>')
+def serve_upload(path): return send_from_directory(UPLOAD_DIR, path)
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -450,21 +794,38 @@ def upload_file():
     if not f.filename: return jsonify({'error':'No file'}),400
     ext=os.path.splitext(f.filename)[1].lower()
     if ext not in ('.jpg','.jpeg','.png','.webp','.bmp'): return jsonify({'error':'Bad format'}),400
-    uid=hashlib.md5(f.read()).hexdigest()[:8]; f.seek(0)
-    fn=f"{uid}{ext}"; f.save(os.path.join(UPLOAD_DIR,fn))
-    img=Image.open(os.path.join(UPLOAD_DIR,fn))
-    return jsonify({'filename':fn,'width':img.size[0],'height':img.size[1]})
+    try:
+        fn, width, height = save_clean_upload(f, ext)
+    except Exception:
+        return jsonify({'error':'Could not process image'}),400
+    return jsonify({
+        'filename': fn,
+        'width': width,
+        'height': height,
+        'metadata_stripped': True,
+        'preview_url': f'/uploads/{fn}',
+        'clean_download_url': f'/download/clean/{fn}',
+    })
 
 @app.route('/estimate', methods=['POST'])
-def est(): return jsonify(estimate(request.json))
+def est():
+    data = request.json or {}
+    if not data.get('bounds'):
+        return jsonify({'error':'No bounds provided.'}),400
+    return jsonify(estimate(data))
 
 @app.route('/scan', methods=['POST'])
 def start():
-    d=request.json; fn=d.get('filename')
+    d=request.json or {}
+    fn=d.get('filename')
     if not fn: return jsonify({'error':'No image'}),400
+    if not d.get('bounds'): return jsonify({'error':'No bounds provided.'}),400
+    mode=d.get('mode','mapillary')
+    if mode in ('mapillary','google','baidu') and not d.get('api_key','').strip():
+        return jsonify({'error':'API key/token required for this mode.'}),400
     fp=os.path.join(UPLOAD_DIR,fn)
     if not os.path.exists(fp): return jsonify({'error':'Not found'}),404
-    ref=Image.open(fp).convert('RGB'); mode=d.get('mode','mapillary')
+    ref=Image.open(fp).convert('RGB')
     sid=str(uuid.uuid4())[:8]; scans[sid]=new_scan(sid,mode)
     p={'threshold':d.get('threshold',55)/100,'api_key':d.get('api_key',''),
        'weights':{'phash':d.get('w_phash',30),'ssim':d.get('w_ssim',30),'histogram':d.get('w_histogram',20),'template':d.get('w_template',20)},
@@ -476,6 +837,7 @@ def start():
     elif mode=='satellite':
         p.update({'source':d.get('source','esri'),'coarse_zoom':d.get('coarse_zoom',14),'fine_zoom':d.get('fine_zoom',18)})
     engines={'mapillary':run_mapillary,'google':run_google,'baidu':run_baidu,'satellite':run_satellite}
+    if mode not in engines: return jsonify({'error':'Unsupported mode'}),400
     t=threading.Thread(target=engines.get(mode,run_mapillary),args=(sid,ref,d['bounds'],p)); t.daemon=True; t.start()
     return jsonify({'scan_id':sid})
 
@@ -502,9 +864,68 @@ def export(sid):
     out.seek(0)
     return send_file(io.BytesIO(out.getvalue().encode()),mimetype='text/csv',as_attachment=True,download_name=f'geoscout_{sid}.csv')
 
+@app.route('/download/clean/<filename>')
+def download_clean(filename):
+    path = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.exists(path): return jsonify({'error':'Not found'}),404
+    return send_from_directory(UPLOAD_DIR, filename, as_attachment=True, download_name=f'geoscout_clean_{filename}')
+
+# ── New v3 routes ────────────────────────────────────────────
+
+@app.route('/geocode', methods=['POST'])
+def geocode_route():
+    d = request.json
+    query = d.get('query', '').strip()
+    if not query: return jsonify({'error':'No search query.'}),400
+    return jsonify(geocode_query(query))
+
+@app.route('/cameras/osm', methods=['POST'])
+def cameras_osm():
+    d = request.json
+    bounds = d.get('bounds')
+    if not bounds: return jsonify({'error':'No bounds provided.'}),400
+    return jsonify(osm_cameras(bounds))
+
+@app.route('/cameras/shodan', methods=['POST'])
+def cameras_shodan():
+    d = request.json
+    bounds = d.get('bounds')
+    api_key = d.get('api_key', '')
+    if not bounds: return jsonify({'error':'No bounds provided.'}),400
+    if not api_key: return jsonify({'error':'Shodan API key required.'}),400
+    return jsonify(shodan_search(bounds, api_key, d.get('query',''), d.get('max_results',100)))
+
+@app.route('/cameras/insecam', methods=['POST'])
+def cameras_insecam():
+    d = request.json
+    country = d.get('country', '')
+    page = d.get('page', 1)
+    if not country: return jsonify({'error':'Country code required.'}),400
+    return jsonify(insecam_search(country, page))
+
+@app.route('/cameras/insecam/detail/<cam_id>')
+def cameras_insecam_detail(cam_id):
+    return jsonify(insecam_camera_detail(cam_id))
+
+@app.route('/cameras/insecam/countries')
+def cameras_insecam_countries():
+    return jsonify(INSECAM_COUNTRIES)
+
+@app.route('/cameras/compare', methods=['POST'])
+def cameras_compare():
+    d = request.json or {}
+    fn = d.get('filename')
+    feed_url = d.get('feed_url')
+    if not fn or not feed_url: return jsonify({'error':'Need filename and feed_url.'}),400
+    fp = os.path.join(UPLOAD_DIR, fn)
+    if not os.path.exists(fp): return jsonify({'error':'Reference image not found.'}),404
+    weights = {'phash':d.get('w_phash',30),'ssim':d.get('w_ssim',30),
+               'histogram':d.get('w_histogram',20),'template':d.get('w_template',20)}
+    return jsonify(compare_camera_feed(fp, feed_url, weights))
+
 if __name__=='__main__':
-    print("\n  GeoScout v2.0 | Mapillary · Google SV · Baidu · Satellite")
+    print("\n  GeoScout v3.0 | Mapillary · Google SV · Baidu · Satellite")
+    print("  + Camera Intel: OSM · Shodan · Insecam")
+    print("  + Geocoding: Address · City · Coordinates")
     print("  http://localhost:5001\n")
-    if getattr(sys, 'frozen', False):
-        threading.Timer(1.5, lambda: __import__('webbrowser').open('http://localhost:5001')).start()
     app.run(host='0.0.0.0', port=5001, debug=False)
