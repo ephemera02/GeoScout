@@ -103,35 +103,6 @@ Current HTTPS deployment:
 
 [https://geoscout.ephemeradev.net/](https://geoscout.ephemeradev.net/)
 
-### Self-Hosting
-
-GeoScout is just a Flask app behind a reverse proxy. Put it behind Caddy or Nginx and let the proxy deal with the public edge.
-
-Minimal Caddy example:
-
-```caddy
-geoscout.yourdomain.com {
-    reverse_proxy 127.0.0.1:5001
-}
-```
-
-Minimal Nginx example:
-
-```nginx
-server {
-    listen 80;
-    server_name geoscout.yourdomain.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:5001;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
 ## Keys
 
 GeoScout does not ship with provider keys. Bring your own.
