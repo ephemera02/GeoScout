@@ -17,7 +17,7 @@ Geocoding:
   - Nominatim/OpenStreetMap (address/city/coordinate lookup, free)
 """
 
-import os, io, json, math, time, hashlib, threading, uuid, csv, re
+import os, io, json, math, time, hashlib, threading, uuid, csv, re, sys, webbrowser
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, send_from_directory, send_file
 from PIL import Image, ImageOps
@@ -25,7 +25,17 @@ import numpy as np
 import urllib.request
 import urllib.parse
 
-app = Flask(__name__)
+if getattr(sys, 'frozen', False):
+    APP_DIR = os.path.dirname(sys.executable)
+else:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+
+TEMPLATE_DIR = os.path.join(APP_DIR, 'templates')
+STATIC_DIR = os.path.join(APP_DIR, 'static')
+UPLOAD_DIR = os.path.join(APP_DIR, 'uploads')
+RESULT_DIR = os.path.join(APP_DIR, 'results')
+
+app = Flask(__name__, template_folder=TEMPLATE_DIR, static_folder=STATIC_DIR)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
 @app.after_request
@@ -49,10 +59,6 @@ def apply_security_headers(resp):
         resp.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
     return resp
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_DIR = os.path.join(BASE_DIR, 'uploads')
-RESULT_DIR = os.path.join(BASE_DIR, 'results')
-STATIC_DIR = os.path.join(BASE_DIR, 'static')
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(RESULT_DIR, exist_ok=True)
 
@@ -928,4 +934,6 @@ if __name__=='__main__':
     print("  + Camera Intel: OSM · Shodan · Insecam")
     print("  + Geocoding: Address · City · Coordinates")
     print("  http://localhost:5001\n")
+    if getattr(sys, 'frozen', False):
+        threading.Timer(1.2, lambda: webbrowser.open('http://127.0.0.1:5001')).start()
     app.run(host='0.0.0.0', port=5001, debug=False)
