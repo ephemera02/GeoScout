@@ -32,6 +32,22 @@ python -m PyInstaller ^
     --icon=Geoscout_icon.ico ^
     --add-data "templates;templates" ^
     --add-data "static;static" ^
+    --hidden-import=jinja2 ^
+    --hidden-import=markupsafe ^
+    --hidden-import=werkzeug ^
+    --hidden-import=werkzeug.serving ^
+    --hidden-import=werkzeug.routing ^
+    --hidden-import=werkzeug.middleware ^
+    --hidden-import=werkzeug.debug ^
+    --hidden-import=click ^
+    --hidden-import=blinker ^
+    --hidden-import=itsdangerous ^
+    --hidden-import=flask.json ^
+    --hidden-import=PIL ^
+    --hidden-import=PIL.Image ^
+    --hidden-import=numpy ^
+    --hidden-import=csv ^
+    --hidden-import=email.mime.text ^
     app.py
 
 if errorlevel 1 (

@@ -936,8 +936,29 @@ def cameras_compare():
     return jsonify(compare_camera_feed(fp, feed_url, weights))
 
 if __name__=='__main__':
-    print("\n  GeoScout v3.0 | Mapillary · Google SV · Baidu · Satellite")
-    print("  + Camera Intel: OSM · Shodan · Insecam")
-    print("  + Geocoding: Address · City · Coordinates")
-    print("  http://localhost:5001\n")
-    app.run(host='0.0.0.0', port=5001, debug=False)
+    import webbrowser, logging
+
+    # When running --noconsole, crashes are invisible. Log to a file
+    # next to the exe so there's always a breadcrumb trail.
+    log_path = os.path.join(APP_DIR, 'geoscout.log')
+    logging.basicConfig(
+        filename=log_path,
+        level=logging.DEBUG,
+        format='%(asctime)s  %(levelname)s  %(message)s'
+    )
+
+    try:
+        port = 5001
+        url  = f'http://localhost:{port}'
+        logging.info(f'GeoScout v3.0 starting on {url}')
+        logging.info(f'BUNDLE_DIR = {BUNDLE_DIR}')
+        logging.info(f'APP_DIR    = {APP_DIR}')
+
+        # Open the browser after a short delay so Flask has time to bind
+        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+
+        print(f"\n  GeoScout v3.0 | http://localhost:{port}\n")
+        app.run(host='0.0.0.0', port=port, debug=False)
+    except Exception:
+        logging.exception('Fatal error during startup')
+        raise
